@@ -103,11 +103,15 @@ def build_training_dataframe():
     df['risk_score'] = df['risk_score'].clip(0.0, 1.0)
 
     # Convert to 3-class label
+    low_thresh    = df['risk_score'].quantile(0.33)
+    medium_thresh = df['risk_score'].quantile(0.66)
+
     df['risk_level'] = pd.cut(
         df['risk_score'],
-        bins=[0, 0.35, 0.65, 1.0],
+        bins=[0, low_thresh, medium_thresh, 1.0],
         labels=['low', 'medium', 'high'],
         include_lowest=True,
+        duplicates='drop',
     )
 
     norm_cols = [f'{c}_norm' for c in FEATURE_COLUMNS]
