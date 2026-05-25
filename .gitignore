@@ -7,3 +7,5 @@ data/raw/
 ml_models/*.pkl
 frontend/node_modules/
 *.log
+tech_doc.docx
+~$ch_doc.docx
