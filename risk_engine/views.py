@@ -12,8 +12,12 @@ from flood_zones.models import FloodZone
 from risk_engine.model_service import score_vector, get_models, score_all_zones
 from risk_engine.feature_pipeline import geometry_to_features
 from risk_engine.serializers import FloodZoneSerializer
+from django.middleware.csrf import get_token
 
 
+def csrf_token_view(request):
+    return JsonResponse({'csrfToken': get_token(request)})
+    
 @api_view(['POST'])
 def score_geometry(request):
     """

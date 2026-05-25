@@ -16,9 +16,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from risk_engine.views import csrf_token_view 
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/csrf/', csrf_token_view), 
     path('api/flood-zones/', include('flood_zones.urls')),
     path('api/risk/',        include('risk_engine.urls')),
 ]
