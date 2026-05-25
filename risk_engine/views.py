@@ -17,7 +17,7 @@ from django.middleware.csrf import get_token
 
 def csrf_token_view(request):
     return JsonResponse({'csrfToken': get_token(request)})
-    
+
 @api_view(['POST'])
 def score_geometry(request):
     """
@@ -53,40 +53,42 @@ def score_geometry(request):
 
 @api_view(['GET'])
 def list_zones(request):
-    """
-    GET /api/risk/zones/?level=high&limit=100
-
-    Returns flood zones as GeoJSON FeatureCollection.
-    Filtered by risk level if ?level= param given.
-    """
-    level  = request.query_params.get('level', None)
-    limit  = int(request.query_params.get('limit', 200))
+    level     = request.query_params.get('level', None)
+    limit     = int(request.query_params.get('limit', 500))
     min_score = float(request.query_params.get('min_score', 0))
 
-    qs = FloodZone.objects.exclude(
-        risk_score=0.0
-    ).order_by('-risk_score')
+    qs = FloodZone.objects.exclude(risk_score=0.0)
 
-    if level:
-        qs = qs.filter(risk_level=level)
     if min_score:
         qs = qs.filter(risk_score__gte=min_score)
 
-    qs = qs[:limit]
+    if level:
+        # Specific level requested — return top N by score
+        qs = qs.filter(risk_level=level).order_by('-risk_score')[:limit]
+        zone_list = list(qs)
+    else:
+        # All zones — sample proportionally so high/medium/low all appear
+        per_level = limit // 3
+        zone_list = []
+        for lvl in ['high', 'medium', 'low']:
+            zone_list += list(
+                qs.filter(risk_level=lvl)
+                  .order_by('-risk_score')[:per_level]
+            )
 
     features = []
-    for zone in qs:
+    for zone in zone_list:
         features.append({
             'type': 'Feature',
             'geometry': json.loads(zone.geometry.geojson),
             'properties': {
-                'id':           zone.id,
-                'name':         zone.name,
-                'risk_score':   round(zone.risk_score, 4),
-                'risk_level':   zone.risk_level,
-                'elevation_m':  zone.avg_elevation_m,
-                'rainfall_mm':  zone.avg_rainfall_mm,
-                'slope_deg':    zone.avg_slope_degrees,
+                'id':          zone.id,
+                'name':        zone.name,
+                'risk_score':  round(zone.risk_score, 4),
+                'risk_level':  zone.risk_level,
+                'elevation_m': zone.avg_elevation_m,
+                'rainfall_mm': zone.avg_rainfall_mm,
+                'slope_deg':   zone.avg_slope_degrees,
             }
         })
 
@@ -156,3 +158,25 @@ def model_info(request):
             {'error': str(e)},
             status=status.HTTP_503_SERVICE_UNAVAILABLE
         )
+
+@api_view(['POST'])
+def ask_question(request):
+    """
+    POST /api/risk/ask/
+    Body: { "question": "Is Mirpur safe during monsoon?" }
+    """
+    question = request.data.get('question', '').strip()
+    if not question:
+        return Response(
+            {'error': 'question field is required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    if len(question) > 300:
+        return Response(
+            {'error': 'question too long (max 300 chars)'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    from risk_engine.llm_service import ask_flood_question
+    result = ask_flood_question(question)
+    return Response(result)

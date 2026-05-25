@@ -26,6 +26,7 @@ export const riskApi = {
   getStats:      ()            => api.get('/risk/stats/'),
   getModelInfo:  ()            => api.get('/risk/model-info/'),
   healthCheck:   ()            => api.get('/flood-zones/health/'),
+  askQuestion:   (question)    => api.post('/risk/ask/', { question }),
 }
 
 export default api

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
@@ -17,7 +17,8 @@ import DrawControl   from './components/DrawControl'
 import MapLegend     from './components/MapLegend'
 import ScorePanel    from './components/ScorePanel'
 import StatsBar      from './components/StatsBar'
-import { riskApi, default as api  }   from './services/api'
+import ChatPanel     from './components/ChatPanel'
+import { riskApi, default as api } from './services/api'
 
 const DHAKA_CENTER = [23.8103, 90.4125]
 
@@ -29,6 +30,7 @@ const FILTER_LEVELS = [
 ]
 
 export default function App() {
+  const [chatOpen,      setChatOpen]      = useState(false)
   const [zones,         setZones]         = useState(null)
   const [zonesLoading,  setZonesLoading]  = useState(false)
   const [filterLevel,   setFilterLevel]   = useState('')
@@ -37,17 +39,29 @@ export default function App() {
   const [scoreLoading,  setScoreLoading]  = useState(false)
   const [selectedZone,  setSelectedZone]  = useState(null)
 
-  const loadZones = useCallback((level = '') => {
+  // Use a ref so loadZones is stable and won't re-trigger useEffect
+  const loadZonesRef = useRef(null)
+  loadZonesRef.current = (level = '') => {
     setZonesLoading(true)
     riskApi.getZones({ level, limit: 500 })
       .then(r => setZones(r.data))
       .catch(console.error)
       .finally(() => setZonesLoading(false))
+  }
+
+  const loadZones = useCallback((level = '') => {
+    loadZonesRef.current(level)
   }, [])
+
+  // Seed CSRF + auto-load all zones once on mount
+  useEffect(() => {
+    api.get('/csrf/').catch(() => {})
+    loadZonesRef.current('')
+  }, []) // empty deps — runs once only
 
   const handleFilterChange = (level) => {
     setFilterLevel(level)
-    loadZones(level)
+    loadZonesRef.current(level)
   }
 
   const handleShapeDrawn = useCallback((geometry) => {
@@ -65,11 +79,6 @@ export default function App() {
   const handleClearScore = useCallback(() => {
     setScoreResult(null)
     setScoreFeatures(null)
-  }, [])
-
-  // Seed CSRF cookie once on load
-  useEffect(() => {
-    api.get('/csrf/').catch(() => {})
   }, [])
 
   return (
@@ -98,11 +107,7 @@ export default function App() {
 
         <StatsBar />
 
-        {/* Filter buttons */}
-        <div style={{
-          display: 'flex', gap: 6,
-          flexShrink: 0,
-        }}>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           {FILTER_LEVELS.map(f => (
             <button
               key={f.value}
@@ -116,9 +121,7 @@ export default function App() {
                 background:   filterLevel === f.value
                   ? 'rgba(255,255,255,0.9)'
                   : 'rgba(255,255,255,0.15)',
-                color:        filterLevel === f.value
-                  ? '#0C447C'
-                  : 'white',
+                color:        filterLevel === f.value ? '#0C447C' : 'white',
                 fontWeight:   filterLevel === f.value ? 500 : 400,
               }}
             >
@@ -140,7 +143,7 @@ export default function App() {
               marginLeft:   4,
             }}
           >
-            {zonesLoading ? 'Loading...' : 'Load zones'}
+            {zonesLoading ? 'Loading...' : 'Reload'}
           </button>
         </div>
       </div>
@@ -172,7 +175,6 @@ export default function App() {
           <MapLegend />
         </MapContainer>
 
-        {/* Score panel — floats over the map */}
         <ScorePanel
           result={scoreResult}
           features={scoreFeatures}
@@ -180,65 +182,93 @@ export default function App() {
           onClear={handleClearScore}
         />
 
-        {/* Zone detail panel */}
-        {selectedZone && (
-          <div style={{
-            position:     'absolute',
-            bottom:       20,
-            left:         '50%',
-            transform:    'translateX(-50%)',
-            background:   'white',
-            borderRadius: 10,
-            padding:      '12px 20px',
-            boxShadow:    '0 2px 12px rgba(0,0,0,0.15)',
-            zIndex:       1000,
-            minWidth:     280,
-            display:      'flex',
-            alignItems:   'center',
-            justifyContent: 'space-between',
-            gap:          16,
-          }}>
-            <div>
-              <div style={{ fontWeight: 500, fontSize: 14 }}>
-                {selectedZone.properties.name}
-              </div>
-              <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
-                Risk: {selectedZone.properties.risk_level} —
-                Score: {(selectedZone.properties.risk_score * 100).toFixed(1)}% —
-                Elev: {selectedZone.properties.elevation_m?.toFixed(1)}m
-              </div>
-            </div>
-            <button
-              onClick={() => setSelectedZone(null)}
-              style={{
-                border: 'none', background: '#eee',
-                borderRadius: 6, padding: '4px 10px',
-                cursor: 'pointer', fontSize: 12,
-              }}
-            >
-              Close
-            </button>
-          </div>
-        )}
+        {selectedZone && (() => {
+          const props = selectedZone.properties || {};
+          const riskLevel = props.risk_level || 'unknown';
+          const riskScore = props.risk_score || 0;
+          const elevation = props.elevation_m;
+          
+          // Dynamic risk theming
+          const theme = riskLevel === 'high' 
+            ? { bg: '#FEF2F2', border: '#FCA5A5', text: '#DC2626' }
+            : riskLevel === 'medium' 
+              ? { bg: '#FFFBEB', border: '#FCD34D', text: '#D97706' }
+              : { bg: '#ECFDF5', border: '#6EE7B7', text: '#059669' };
 
-        {/* Draw hint */}
-        {!zones && !scoreResult && (
-          <div style={{
-            position:   'absolute',
-            bottom:     80,
-            left:       '50%',
-            transform:  'translateX(-50%)',
-            background: 'rgba(12,68,124,0.85)',
-            color:      'white',
-            padding:    '8px 18px',
-            borderRadius: 20,
-            fontSize:   12,
-            zIndex:     1000,
-            pointerEvents: 'none',
-          }}>
-            Click "Load zones" to see risk overlay — or draw a polygon to score any area
-          </div>
-        )}
+          return (
+            <div style={{
+              position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+              background: 'rgba(255, 255, 255, 0.95)', borderRadius: 14, padding: '16px 20px',
+              boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06)',
+              zIndex: 1000, minWidth: 300, maxWidth: '90vw',
+              display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16,
+              border: `1px solid ${theme.border}44`, backdropFilter: 'blur(10px)',
+              animation: 'fadeSlideUp 0.25s ease-out'
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: '#111827', lineHeight: 1.2 }}>
+                    {props.name || 'Unknown Zone'}
+                  </h3>
+                  <span style={{
+                    padding: '3px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: 0.3,
+                    background: theme.bg, color: theme.text, border: `1px solid ${theme.border}`
+                  }}>
+                    {riskLevel.toUpperCase()}
+                  </span>
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: 13, color: '#4B5563' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: '#9CA3AF', fontSize: 12 }}>Score</span>
+                    <span style={{ fontWeight: 600, color: theme.text }}>{(riskScore * 100).toFixed(1)}%</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: '#9CA3AF', fontSize: 12 }}>Elevation</span>
+                    <span style={{ fontWeight: 600 }}>{elevation?.toFixed(1) ?? '—'} m</span>
+                  </div>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => setSelectedZone(null)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 4, borderRadius: 6,
+                  color: '#9CA3AF', transition: 'all 0.2s', fontSize: 18, lineHeight: 1, flexShrink: 0
+                }}
+                onMouseEnter={e => e.currentTarget.style.color = '#EF4444'}
+                onMouseLeave={e => e.currentTarget.style.color = '#9CA3AF'}
+                title="Close panel"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })()}
+
+        <ChatPanel isOpen={chatOpen} onClose={() => setChatOpen(false)} />
+
+        <button
+          onClick={() => setChatOpen(o => !o)}
+          style={{
+            position:     'absolute',
+            bottom:       24,
+            right:        12,
+            zIndex:       1000,
+            background:   '#0C447C',
+            color:        'white',
+            border:       'none',
+            borderRadius: 24,
+            padding:      '10px 18px',
+            fontSize:     13,
+            fontWeight:   500,
+            cursor:       'pointer',
+            boxShadow:    '0 2px 10px rgba(0,0,0,0.2)',
+            display:      chatOpen ? 'none' : 'block',
+          }}
+        >
+          Ask AI assistant
+        </button>
       </div>
     </div>
   )

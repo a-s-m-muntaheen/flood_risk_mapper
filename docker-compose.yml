@@ -1,0 +1,73 @@
+version: '3.9'
+
+networks:
+  app_net:
+    driver: bridge
+
+services:
+
+  db:
+    image: postgis/postgis:16-3.4
+    networks:
+      - app_net
+    environment:
+      POSTGRES_DB:       flood_risk_db
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: .
+    networks:
+      - app_net
+    command: >
+      sh -c "python3 manage.py migrate &&
+             python3 scripts/generate_rainfall.py &&
+             python3 manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SECRET_KEY:           django-insecure-docker-dev-key
+      DEBUG:                "True"
+      ALLOWED_HOSTS:        "localhost,127.0.0.1,backend,0.0.0.0"
+      DB_NAME:              flood_risk_db
+      DB_USER:              postgres
+      DB_PASSWORD:          postgres
+      DB_HOST:              db
+      DB_PORT:              "5432"
+      GDAL_LIBRARY_PATH:    /usr/lib/libgdal.so
+      GEOS_LIBRARY_PATH:    /usr/lib/libgeos_c.so
+      PROJ_LIB:             /usr/share/proj
+      DJANGO_READ_DOT_ENV_FILE: "False"
+      CORS_ALLOWED_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173"
+
+  frontend:
+    image: node:20-alpine
+    networks:
+      - app_net
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - frontend_nm:/app/node_modules
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  frontend_nm:
